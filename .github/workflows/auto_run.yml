@@ -1,0 +1,45 @@
+name: Daily AI Stock Screener Auto Update
+
+on:
+  schedule:
+    # 每天台灣時間下午 15:30 自動執行 (15:30 - 8小時 = 國際標準時 07:30)
+    - cron: '30 7 * * *'
+  workflow_dispatch: # 允許您在 GitHub 網頁上點擊手動強制執行
+
+permissions:
+  contents: write
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 1. 檢查並複製儲存庫程式碼
+      uses: actions/checkout@v4
+
+    - name: 2. 初始化 Python 環境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 3. 安裝量化分析所需套件
+      run: |
+        python -m pip install --upgrade pip
+        pip install yfinance pandas numpy
+
+    - name: 4. 執行選股演算法並產生最新網頁
+      run: |
+        python taiwan_ai_screener.py
+
+    - name: 5. 將最新產出的網頁自動推回 GitHub 儲存庫
+      run: |
+        git config --global user.name "GitHub Actions Bot"
+        git config --global user.email "actions@github.com"
+        git add index.html
+        # 檢查檔案是否有變更，有變更才進行提交，避免報錯
+        if ! git diff-index --quiet HEAD --; then
+          git commit -m "🤖 系統自動更新：$(date '+%Y-%m-%d %H:%M:%S') 最新 AI 飆股數據"
+          git push
+        else
+          echo "今日數據與先前一致，無需更新。"
+        fi
