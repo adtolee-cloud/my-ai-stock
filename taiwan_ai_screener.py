@@ -2,36 +2,48 @@ import datetime
 import json
 import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
 
 # ==============================================================================
-# 1. 填寫您的 GitHub 帳號資訊 (用來建立網頁上的手動更新按鈕連結)
+# 1. 填寫您的 GitHub 帳號資訊
 # ==============================================================================
-# ⚠️ 這裡已經幫您修改為您真實的 GitHub 帳號名稱：adtolee-cloud
 GITHUB_USERNAME = "adtolee-cloud"
 REPO_NAME = "my-ai-stock"
 
 # ==============================================================================
-# 2. 定義監控的台股 AI 概念股池 (包含散熱、光通訊、高速傳輸、PCB、伺服器大廠)
+# 2. 定義監控的台股 AI 概念股池
 # ==============================================================================
 AI_WATCHLIST = [
-    "6526.TW",  # 達發
-    "4958.TW",  # 臻鼎-KY
-    "3363.TW",  # 上詮
-    "3017.TW",  # 奇鋐
-    "2382.TW",  # 廣達
-    "2330.TW",  # 台積電
-    "3163.TW",  # 波若威
-    "8021.TW",  # 尖點
-    "3167.TW",  # 大量
-    "2308.TW",  # 台達電
-    "6669.TW",  # 緯穎
-    "2454.TW",  # 聯發科
-    "3231.TW",  # 緯創
-    "2356.TW",  # 英業達
+    "6526.TW",
+    "4958.TW",
+    "3363.TW",
+    "3017.TW",
+    "2382.TW",
+    "2330.TW",
+    "3163.TW",
+    "8021.TW",
+    "3167.TW",
+    "2308.TW",
+    "6669.TW",
+    "2454.TW",
+    "3231.TW",
+    "2356.TW",
 ]
 
 print("🚀 量化選股模型啟動：開始分析台股 AI 供應鏈數據...")
+
+# ==============================================================================
+# ⚠️ 核心修正：配置自定義 Session，偽裝成台灣在地瀏覽器，防止 GitHub 海外 IP 被阻擋
+# ==============================================================================
+custom_session = requests.Session()
+custom_session.headers.update(
+    {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+)
 
 
 # ==============================================================================
@@ -42,10 +54,10 @@ def screen_breakout_stocks(ticker_list):
 
     for ticker in ticker_list:
         try:
-            # 抓取最近 120 天的日 K 線數據
-            stock = yf.Ticker(ticker)
+            # 帶入防封鎖的 session 抓取最近 120 天的日 K 線數據
+            stock = yf.Ticker(ticker, session=custom_session)
             df = stock.history(period="120d")
-            if len(df) < 60:
+            if df.empty or len(df) < 60:
                 continue
 
             # 計算均線 (5MA, 10MA, 20MA)
@@ -60,28 +72,24 @@ def screen_breakout_stocks(ticker_list):
             volume = today["Volume"]
             ma5, ma10, ma20 = today["5MA"], today["10MA"], today["20MA"]
 
-            # ---- 量化條件 1: 均線糾結度 (5, 10, 20MA 彼此距離在 3.5% 以內) ----
+            # ---- 量化條件 1: 均線糾結度 ----
             ma_list = [ma5, ma10, ma20]
             ma_dispersion = (max(ma_list) - min(ma_list)) / min(ma_list)
             is_tangent = ma_dispersion <= 0.035
 
-            # ---- 量化條件 2: 剛要噴發 (今日收盤突破均線糾結，且創近10日新高) ----
+            # ---- 量化條件 2: 剛要噴發 ----
             is_breakout = (close_p > max(ma_list)) and (
                 close_p >= df["Close"].iloc[-10:].max()
             )
 
-            # ---- 量化條件 3: 成交量爆發 (今日量大於5日均量的 1.5 倍) ----
+            # ---- 量化條件 3: 成交量爆發 ----
             is_volume_up = volume > (df["5日均量"].iloc[-2] * 1.5)
 
-            # 篩選核心邏輯：剛突破均線糾結，或者帶量突破創高
             if (is_tangent and is_breakout) or (is_breakout and is_volume_up):
-                # 量化計算建議買進區間 (第一根突破棒的中軸至收盤價)
                 buy_min = round(min(today["Open"], close_p) * 0.99, 1)
                 buy_max = round(close_p * 1.005, 1)
-                # 防守位設定為 20MA 或此棒最低價
                 support_line = round(min(today["Low"], ma20), 1)
 
-                # 格式化 Highcharts 所需的 K 線 JSON 數據格式 [[時間戳, O, H, L, C], ...]
                 chart_data = []
                 for index, row in df.tail(40).iterrows():
                     timestamp = int(index.timestamp() * 1000)
@@ -95,7 +103,6 @@ def screen_breakout_stocks(ticker_list):
                         ]
                     )
 
-                # 抓取股票代號 (去除.TW後保留純數字)
                 clean_ticker = ticker.split(".")[0]
 
                 selected_stocks.append(
@@ -121,7 +128,7 @@ filtered_list = screen_breakout_stocks(AI_WATCHLIST)
 print(f"✅ 篩選完成！共找到 {len(filtered_list)} 檔剛要噴發的 AI 潛力股。")
 
 # ==============================================================================
-# 4. 自動網頁範本 (HTML) 內嵌互動 K 線與自動更新按鈕
+# 4. 自動網頁範本 (HTML)
 # ==============================================================================
 html_template = """
 <!DOCTYPE html>
@@ -130,7 +137,6 @@ html_template = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 剛噴發飆股每日監控系統</title>
-    <!-- 引入高階圖表庫 -->
     <script src="https://highcharts.com"></script>
     <style>
         body { background-color: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; margin: 0; }
@@ -153,7 +159,6 @@ html_template = """
         <p style="color:#94a3b8;">策略：均線極度糾結後首日帶量突破 ｜ 移動停損防守</p>
         <p>系統最後更新時間：<span class="update-time">UPDATE_TIME_PLACEHOLDER</span></p>
         
-        <!-- 手動更新按鈕區區塊 -->
         <div style="margin: 20px 0;">
             <button id="update-btn" class="update-btn" onclick="triggerManualUpdate()">
                 🔄 點我立刻手動更新數據
@@ -169,7 +174,6 @@ html_template = """
     function triggerManualUpdate() {
         const btn = document.getElementById('update-btn');
         const msg = document.getElementById('status-msg');
-        
         btn.disabled = true;
         btn.style.backgroundColor = '#64748b';
         btn.innerText = '⏳ 正在跳轉至雲端控制室...';
@@ -187,11 +191,9 @@ html_template = """
         }, 1500);
     }
 
-    // 接收來自 Python 篩選完的最新股票清單 JSON
     const stockData = STOCKS_DATA_PLACEHOLDER;
 
     window.onload = function() {
-        // 【修正防錯】如果沒有股票符合條件，安全顯示提示字眼
         if(!stockData || stockData.length === 0) {
             document.querySelector('.container').innerHTML += '<div style="text-align:center; color:#94a3b8; font-size:1.2rem; margin-top:50px; padding:30px; background:#1e293b; border-radius:12px;">📊 今日暫無完全符合「均線糾結後剛放量噴發」條件的個股。<br><span style="font-size:0.9rem; color:#64748b;">原因：可能正逢大盤震盪盤整，或主力資金正在洗盤。請於下一個交易日盤後再次點選上方按鈕手動更新。</span></div>';
             return;
@@ -229,3 +231,4 @@ html_template = """
 </html>
 """
 
+# 5. 生成元件
